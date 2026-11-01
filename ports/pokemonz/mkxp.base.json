@@ -1,0 +1,13 @@
+{
+  "fullscreen": true,
+  "fixedAspectRatio": true,
+  "smoothScaling": 0,
+  "vsync": true,
+  "frameSkip": true,
+  "fontHeightReporting": 1,
+  "fontOutlineCrop": false,
+  "printFPS": false,
+  "winResizable": false,
+  "dataPathOrg": "pokemonz",
+  "dataPathApp": "pokemonz"
+}

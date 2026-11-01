@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<gameList>
+  <game>
+    <path>./PokemonZ.sh</path>
+    <name>Pokemon Z</name>
+    <desc>Fangame de Pokemon hecho con RPG Maker XP (Pokemon Essentials).</desc>
+    <genre>RPG</genre>
+  </game>
+</gameList>

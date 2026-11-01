@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "name": "pokemonz.zip",
+  "items": ["PokemonZ.sh", "pokemonz"],
+  "items_opt": null,
+  "attr": {
+    "title": "Pokemon Z",
+    "desc": "Fangame de Pokemon en RPG Maker XP (Pokemon Essentials). Requiere los archivos del juego.",
+    "inst": "Copia los archivos del juego (Game.ini, Data, Graphics, Audio...) en pokemonz/gamedata.",
+    "genres": ["rpg"],
+    "porter": ["AleWiccan"],
+    "image": {},
+    "rtr": false,
+    "runtime": null,
+    "reqs": [],
+    "arch": ["aarch64"]
+  }
+}

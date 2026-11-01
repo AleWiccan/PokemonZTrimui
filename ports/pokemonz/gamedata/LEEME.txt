@@ -1,0 +1,1 @@
+Copia aqui el contenido de la carpeta del juego (Game.ini, Data/, Graphics/, Audio/, Fonts/...).

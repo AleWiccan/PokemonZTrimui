@@ -1,0 +1,20 @@
+# Mando -> teclado (RGSS: C=Z/Enter, B=X/Esc, A=Shift, X=A, Y=S, Z=D, L=Q, R=W)
+up = up
+down = down
+left = left
+right = right
+# En esta consola los botones llegan intercambiados (A<->B, X<->Y) respecto al nombre de SDL:
+# boton fisico A = 'b', B = 'a', X = 'y', Y = 'x'
+b = z
+a = x
+y = a
+x = s
+l1 = q
+r1 = w
+start = return
+back = shift
+guide = esc
+left_analog_up = up
+left_analog_down = down
+left_analog_left = left
+left_analog_right = right
