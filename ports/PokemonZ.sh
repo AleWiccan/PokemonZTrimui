@@ -10,7 +10,7 @@ done
 cd "$GAMEDIR" || exit 1
 
 LOGF="$GAMEDIR/log.txt"
-echo "[launcher] version 1 (basado en el lanzador de Anil v9) - $(date)" > "$LOGF"
+echo "[launcher] version 13 (basado en el lanzador de Anil v9) - $(date)" > "$LOGF"
 
 # Libs propias primero, luego la SDL2 de la consola. SDL_VIDEODRIVER sin definir (driver mali).
 export LD_LIBRARY_PATH="$GAMEDIR/libs:/usr/trimui/lib:$LD_LIBRARY_PATH"
@@ -33,6 +33,7 @@ mkdir -p "$XDG_DATA_HOME"
 
 [ -f "$GAMEDIR/gamedata/Game.ini" ] || { echo "No hay juego en $GAMEDIR/gamedata (falta Game.ini)" >> "$LOGF"; exit 1; }
 [ -f "$GAMEDIR/mkxp-z" ] || { echo "Falta el binario aarch64 mkxp-z en $GAMEDIR" >> "$LOGF"; exit 1; }
+echo "[launcher] Scripts.rxdata: $(wc -c < "$GAMEDIR/gamedata/Data/Scripts.rxdata" 2>/dev/null) bytes (parcheado v12 = 1017715)" >> "$LOGF"
 chmod +x "$GAMEDIR/mkxp-z"
 
 # Si el menu de opciones del juego deja la configuracion en mal estado: crea un archivo reset-config.on
@@ -52,9 +53,34 @@ done
 {
   printf '{\n  "gameFolder": "%s/gamedata",\n' "$GAMEDIR"
   [ -n "$SFPATH" ] && printf '  "midiSoundFont": "%s",\n' "$SFPATH"
+  [ -f "$GAMEDIR/win32shim.rb" ] && printf '  "preloadScript": ["%s"],\n' "$GAMEDIR/win32shim.rb"
   tail -n +2 "$GAMEDIR/mkxp.base.json"
 } > "$GAMEDIR/mkxp.json"
 echo "[launcher] mkxp.json generado (gameFolder=$GAMEDIR/gamedata, soundfont=${SFPATH:-ninguno})" >> "$LOGF"
+
+# --- Pruebas de rendimiento/grafico SIN editar JSON: crea (vacio) uno de estos archivos en la carpeta del port ---
+#   fps.on         -> el log anota "FPS: N" cada segundo (N = fotogramas de juego por segundo; el objetivo del juego es 60)
+#   frameskip.off  -> no salta fotogramas: la imagen no "se congela", pero el juego va mas lento si la consola no llega
+#   vsync.off      -> sin sincronizacion vertical
+#   subimage.off   -> desactiva subImageFix (correccion de rayas negras en GPUs con driver defectuoso)
+MJ="$GAMEDIR/mkxp.json"
+[ -f "$GAMEDIR/fps.on" ]        && { sed -i 's/"printFPS": false/"printFPS": true/' "$MJ";        echo "[launcher] fps.on: printFPS activado" >> "$LOGF"; }
+[ -f "$GAMEDIR/frameskip.off" ] && { sed -i 's/"frameSkip": true/"frameSkip": false/' "$MJ";      echo "[launcher] frameskip.off: frameSkip desactivado" >> "$LOGF"; }
+[ -f "$GAMEDIR/vsync.off" ]     && { sed -i 's/"vsync": true/"vsync": false/' "$MJ";              echo "[launcher] vsync.off: vsync desactivado" >> "$LOGF"; }
+[ -f "$GAMEDIR/subimage.off" ]  && { sed -i 's/"subImageFix": true/"subImageFix": false/' "$MJ";  echo "[launcher] subimage.off: subImageFix desactivado" >> "$LOGF"; }
+echo "[launcher] opciones activas: $(grep -E '"(vsync|frameSkip|subImageFix|printFPS)"' "$MJ" | tr -d ' \n')" >> "$LOGF"
+#   stretch.on     -> estira la imagen a pantalla completa (16:9). Rellena toda la pantalla pero deforma: el juego es 4:3
+#   smooth.on      -> suaviza el escalado (la escala 1,875x no es entera y con pixeles nitidos se ven irregulares)
+#   wide.on        -> PRUEBA: el juego usa 682x384 (16:9) en vez de 512x384; muestra mas mapa a los lados, pero los menus
+#                     y combates estan disenados para 512x384 y pueden verse descolocados
+#   tilemap.ruby   -> usa el mapa en Ruby puro del juego (MAPVIEWMODE=1, lento). Por defecto se usa el mapa nativo de mkxp-z
+#   prof.on        -> perfil: cada 30 s el log anota en que scripts del juego se gasta el tiempo (para buscar lo que va lento)
+[ -f "$GAMEDIR/stretch.on" ] && { sed -i 's/"fixedAspectRatio": true/"fixedAspectRatio": false/' "$MJ"; echo "[launcher] stretch.on: imagen estirada a 16:9" >> "$LOGF"; }
+[ -f "$GAMEDIR/smooth.on" ]  && { sed -i 's/"smoothScaling": 0/"smoothScaling": 1/' "$MJ";            echo "[launcher] smooth.on: escalado suave" >> "$LOGF"; }
+unset PZ_TILEMAP PZ_PROF PZ_WIDE
+if [ -f "$GAMEDIR/wide.on" ]; then export PZ_WIDE=1; echo "[launcher] wide.on: resolucion 682x384 (prueba)" >> "$LOGF"; fi
+if [ -f "$GAMEDIR/tilemap.ruby" ]; then export PZ_TILEMAP=ruby; echo "[launcher] tilemap.ruby: mapa en Ruby (lento)" >> "$LOGF"; fi
+if [ -f "$GAMEDIR/prof.on" ]; then export PZ_PROF=1; echo "[launcher] prof.on: perfil activado" >> "$LOGF"; fi
 
 # El motor NO lee gamedata/mkxp.json (usa el de esta carpeta), pero el menu de opciones del juego (vsync...) lo REESCRIBE,
 # y si queda vacio o roto el juego se cierra al arrancar (NameError HTTPLite::JSON::ParserError).

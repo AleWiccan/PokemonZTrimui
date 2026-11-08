@@ -93,32 +93,114 @@ end
 tmpdir = ["/tmp", ENV["TMPDIR"], "."].compact.find { |d| File.directory?(d) && File.writable?(d) } || "."
 ENV["TEMP"] ||= tmpdir
 ENV["TMP"]  ||= tmpdir
-Win32Shim.note("shim v8 (TEMP=#{ENV['TEMP']})")
+Win32Shim.note("shim v13 (TEMP=#{ENV['TEMP']})")
+
+# ---------------------------------------------------------------------------
+# Ventana a pantalla completa tras Graphics.resize_screen
+# ---------------------------------------------------------------------------
+# mkxp-z arranca la pantalla del juego a 640x480 y el juego llama a Graphics.resize_screen(512, 384).
+# Esa llamada pide tambien cambiar el tamano de la ventana, y el controlador grafico de la Trimui deja un
+# recuadro de 512x384 en lugar de la pantalla completa. Tras cada resize_screen se devuelve la ventana al
+# tamano de la pantalla (1280x720); mkxp-z escala la imagen del juego a esa ventana (fixedAspectRatio, etc.).
+PZ_WIN_W = (ENV["PZ_WINW"] || 1280).to_i
+PZ_WIN_H = (ENV["PZ_WINH"] || 720).to_i
+if defined?(Graphics) && Graphics.respond_to?(:resize_screen) && Graphics.respond_to?(:resize_window) && !Graphics.respond_to?(:__pz_resize_screen)
+  class << Graphics
+    alias_method :__pz_resize_screen, :resize_screen
+    def resize_screen(*a)
+      r = __pz_resize_screen(*a)
+      begin
+        Graphics.resize_window(PZ_WIN_W, PZ_WIN_H, false)
+        Win32Shim.note("resize_screen#{a.inspect}: ventana devuelta a #{PZ_WIN_W}x#{PZ_WIN_H}")
+      rescue Exception => e
+        Win32Shim.note("resize_window fallo: #{e.class}")
+      end
+      r
+    end
+  end
+else
+  Win32Shim.note("Graphics.resize_screen/resize_window no disponibles")
+end
+
+# mkxp-z arranca con una pantalla logica de 640x480 y el juego (que se disenó para una ventana de 512x384)
+# nunca llega a pedir el cambio: dibuja 512x384 en la esquina de un lienzo de 640x480, y por eso se ve un
+# "cuadro" que no llena la pantalla aunque se estire. Se fija aqui la resolucion logica real del juego.
+begin
+  pz_w = (ENV["PZ_WIDE"] == "1" ? 682 : 512)
+  Graphics.resize_screen(pz_w, 384)
+  Win32Shim.note("resolucion logica fijada a #{pz_w}x384")
+rescue Exception => e
+  Win32Shim.note("no se pudo fijar la resolucion logica: #{e.class}")
+end
 
 # ---------------------------------------------------------------------------
 # Perfil de rendimiento (solo si existe el archivo prof.on en la carpeta del port)
 # ---------------------------------------------------------------------------
 # Cada 30 s anota en log.txt:
-#   - "frames": fotogramas, y cuanto tarda de media Graphics.update ("dentro": dibujar + esperar) frente al
-#     resto del fotograma ("fuera": el codigo Ruby del juego). Si "fuera" es grande, el cuello es Ruby (CPU).
-#   - desde donde se llama a las funciones mas costosas (quien llama a exist?, load_data...).
-# Aviso: el muestreo se ve sesgado hacia llamadas que esperan (archivos, dibujo); usa los ms de "fuera"/"dentro".
+#   - frames y cuanto tarda de media Graphics.update ("dentro": dibujar/esperar) frente al resto del fotograma
+#     ("fuera": el codigo Ruby del juego). Si "fuera" es grande, el cuello es Ruby (CPU).
+#   - tirones (fotogramas largos), pasadas del recolector de basura y numero de eventos del mapa.
+#   - tiempo MEDIDO de los metodos clave del mapa (update de Scene_Map, Spriteset_Map, Game_Event, Sprite_Character,
+#     sombras, interprete...). Es tiempo inclusivo: un metodo incluye lo que llama (Game_Event#update incluye Game_Character#update).
+#     "max" es la llamada individual mas larga: si coincide con los tirones, ahi esta el problema.
 if ENV["PZ_PROF"] == "1"
   $stdout.sync = true
-  $__pz_in = 0.0; $__pz_out = 0.0; $__pz_frames = 0; $__pz_prev_end = nil
-  $__pz_top = Hash.new(0); $__pz_chain = Hash.new(0); $__pz_last = Time.now
-  # El informe se imprime desde Graphics.update (hilo del juego), asi no depende del hilo de muestreo.
+  $__pz_in = 0.0; $__pz_out = 0.0; $__pz_frames = 0; $__pz_prev_end = nil; $__pz_last = Time.now
+  $__pz_max = 0.0; $__pz_n50 = 0; $__pz_n100 = 0
+  $__pz_gc0 = GC.count; $__pz_gct0 = (GC.stat(:time) rescue 0)
+  $__pz_t = Hash.new { |h, k| h[k] = [0.0, 0, 0.0] }   # etiqueta => [total s, llamadas, max s]
+  $__pz_instr_done = false
+  PZ_INSTR = [
+    ["Scene_Map", :update], ["Spriteset_Map", :update], ["Game_Map", :update], ["Game_Player", :update],
+    ["Game_Event", :update], ["Game_Character", :update], ["Sprite_Character", :update],
+    ["Sprite_Shadow", :update], ["ShadowSprite", :update], ["Interpreter", :update], ["Game_Screen", :update],
+    ["SynchronizedTilemap", :update], ["CustomTilemap", :update], ["Event", :trigger],
+    ["Particle_Engine", :update], ["Object", :pbDayNightTint], ["Object", :pbEventCommentInput],
+    ["Object", :pbUpdateSceneMap], ["Interpreter", :command_355]
+  ]
+  def __pz_install_instrumentation
+    PZ_INSTR.each do |cname, mname|
+      begin
+        k = Object.const_get(cname)
+        next unless k.method_defined?(mname) || k.private_method_defined?(mname)
+        label = "#{cname}##{mname}"
+        mod = Module.new do
+          define_method(mname) do |*a, &b|
+            t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            begin
+              super(*a, &b)
+            ensure
+              d = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+              h = $__pz_t[label]
+              h[0] += d; h[1] += 1; h[2] = d if d > h[2]
+            end
+          end
+        end
+        k.prepend(mod)
+      rescue NameError
+        next   # esa clase no existe en este juego
+      rescue Exception => e
+        Win32Shim.note("perfil: no se pudo medir #{cname}##{mname}: #{e.class}")
+      end
+    end
+    Win32Shim.note("perfil: metodos del mapa instrumentados")
+  end
   def __pz_report
     f = [$__pz_frames, 1].max
     puts "[prof] --- 30 s: #{$__pz_frames} frames; dentro de Graphics.update #{'%.1f' % ($__pz_in * 1000 / f)} ms/frame; fuera (Ruby del juego) #{'%.1f' % ($__pz_out * 1000 / f)} ms/frame ---"
-    top = $__pz_top.dup; chain = $__pz_chain.dup
-    tot = [top.values.sum, 1].max
-    puts "[prof] funciones (sin contar Graphics.update), #{top.values.sum} muestras:"
-    top.sort_by { |_, v| -v }.first(8).each { |k, v| puts "[prof]   #{v * 100 / tot}%  #{k}" }
-    puts "[prof] quien las llama (4 niveles del juego):"
-    chain.sort_by { |_, v| -v }.first(8).each { |k, v| puts "[prof]   #{v * 100 / tot}%  #{k}" }
-    $__pz_top.clear; $__pz_chain.clear
+    gct = (GC.stat(:time) rescue 0)
+    puts "[prof] tirones: fotograma mas largo #{'%.0f' % ($__pz_max * 1000)} ms; >50 ms: #{$__pz_n50}; >100 ms: #{$__pz_n100}; recolector de basura (GC): #{GC.count - $__pz_gc0} pasadas, #{gct - $__pz_gct0} ms en total"
+    if defined?($game_map) && $game_map
+      puts "[prof] mapa #{($game_map.map_id rescue '?')}: #{($game_map.events.size rescue '?')} eventos"
+    end
+    puts "[prof] metodos medidos (ms por fotograma | llamadas por fotograma | llamada mas larga):"
+    $__pz_t.sort_by { |_, v| -v[0] }.first(14).each do |k, v|
+      puts "[prof]   #{'%6.2f' % (v[0] * 1000 / f)} ms  #{'%6.1f' % (v[1].to_f / f)} llam  max #{'%5.0f' % (v[2] * 1000)} ms  #{k}"
+    end
+    $__pz_t.clear
     $__pz_in = 0.0; $__pz_out = 0.0; $__pz_frames = 0
+    $__pz_max = 0.0; $__pz_n50 = 0; $__pz_n100 = 0
+    $__pz_gc0 = GC.count; $__pz_gct0 = gct
   end
   class << Graphics
     alias_method :__pz_prof_update, :update
@@ -126,27 +208,23 @@ if ENV["PZ_PROF"] == "1"
       t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       $__pz_out += (t0 - $__pz_prev_end) if $__pz_prev_end
       r = __pz_prof_update(*a)
-      $__pz_prev_end = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      $__pz_in += ($__pz_prev_end - t0)
+      t1 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      ft = $__pz_prev_end ? (t1 - $__pz_prev_end) : 0.0
+      $__pz_prev_end = t1
+      $__pz_in += (t1 - t0)
       $__pz_frames += 1
+      $__pz_max = ft if ft > $__pz_max
+      $__pz_n50 += 1 if ft > 0.05
+      $__pz_n100 += 1 if ft > 0.1
+      if !$__pz_instr_done && defined?(Scene_Map) && defined?(Spriteset_Map)
+        $__pz_instr_done = true
+        __pz_install_instrumentation rescue nil
+      end
       if Time.now - $__pz_last >= 30
         $__pz_last = Time.now
         __pz_report rescue nil
       end
       r
-    end
-  end
-  Thread.new do
-    main = Thread.main
-    loop do
-      sleep 0.02
-      bt = (main.backtrace_locations rescue nil)
-      next if bt.nil? || bt.empty?
-      l = bt[0]
-      next if l.label == "update" # Graphics.update en curso: ya se mide aparte
-      $__pz_top["#{l.path}:#{l.label}"] += 1
-      gs = bt.select { |x| x.path.to_s =~ /\A\d+:/ }.first(4)
-      $__pz_chain[gs.map { |x| "#{x.path.split(':',2)[1]}:#{x.lineno} #{x.label}" }.join(" < ")] += 1 unless gs.empty?
     end
   end
   Win32Shim.note("perfil activado (prof.on)")

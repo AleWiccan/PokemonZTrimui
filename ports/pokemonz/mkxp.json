@@ -1,0 +1,19 @@
+{
+  "gameFolder": "/mnt/SDCARD/Data/ports/pokemonz/gamedata",
+  "midiSoundFont": "/mnt/SDCARD/Data/ports/pokemonz/gamedata/soundfont.sf2",
+  "preloadScript": ["/mnt/SDCARD/Data/ports/pokemonz/win32shim.rb"],
+  "fullscreen": true,
+  "fixedAspectRatio": true,
+  "smoothScaling": 0,
+  "vsync": false,
+  "frameSkip": false,
+  "enableBlitting": true,
+  "syncToRefreshrate": true,
+  "subImageFix": true,
+  "fontHeightReporting": 1,
+  "fontOutlineCrop": false,
+  "printFPS": true,
+  "winResizable": false,
+  "dataPathOrg": "pokemonz",
+  "dataPathApp": "pokemonz"
+}
